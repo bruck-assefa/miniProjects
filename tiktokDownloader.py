@@ -6,9 +6,9 @@ import signal
 
 # ---------- Configuration ----------
 USER_HISTORY_JSON = 'user_data_tiktok.json'
-OUTPUT_DIR = os.path.join('TikTok', 'TikTok', 'Videos')
+OUTPUT_DIR = os.path.join('TikTok', 'Videos')  # Modify as per your actual output directory
 WITH_METADATA_DIR = os.path.join('TikTok', 'with_metadata')
-LINKS_PER_CHUNK = 130  # Adjust as needed
+LINKS_PER_CHUNK = 200  # Adjust as needed
 BASE_COMMAND = (
     'yt-dlp '
     '--cookies-from-browser Firefox '
@@ -97,35 +97,46 @@ def embed_metadata(input_mp4, input_json, output_dir):
 
 # ---------- Main Download & Metadata Flow ----------
 def main():
+    # Ask the user what they want to do
+    print("Select an option:")
+    print("1. Download and Bake Metadata (Download videos and embed metadata)")
+    print("2. Just Bake Metadata (Embed metadata for already downloaded videos)")
+    choice = input("Enter 1 or 2: ").strip()
+
+    if choice not in ['1', '2']:
+        print("Invalid choice. Exiting.")
+        return
+
     # Ensure directories exist
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     os.makedirs(WITH_METADATA_DIR, exist_ok=True)
 
-    # Read TikTok links from history
-    print("[INFO] Reading user history JSON...")
-    links = read_links_from_history(USER_HISTORY_JSON)
-    total_links = len(links)
-    print(f"[INFO] Found {total_links} liked video links.")
+    if choice == '1':
+        # 1) Read TikTok links from history
+        print("[INFO] Reading user history JSON...")
+        links = read_links_from_history(USER_HISTORY_JSON)
+        total_links = len(links)
+        print(f"[INFO] Found {total_links} liked video links.")
 
-    if total_links == 0:
-        print("[INFO] No links found. Exiting.")
-        return
+        if total_links == 0:
+            print("[INFO] No links found. Exiting.")
+            return
 
-    # Chunk links
-    chunks = list(chunk_list(links, LINKS_PER_CHUNK))
-    print(f"[INFO] Total chunks: {len(chunks)}")
+        # 2) Chunk links
+        chunks = list(chunk_list(links, LINKS_PER_CHUNK))
+        print(f"[INFO] Total chunks: {len(chunks)}")
 
-    # Download videos
-    for i, chunk in enumerate(chunks, start=1):
-        print(f"[INFO] Downloading chunk {i}/{len(chunks)}...")
-        links_part = " ".join(f'"{link}"' for link in chunk)
-        command = BASE_COMMAND + " " + links_part
-        print(f"[CMD] Running yt-dlp for chunk {i}...")
-        run_command(command)
+        # 3) Download videos
+        for i, chunk in enumerate(chunks, start=1):
+            print(f"[INFO] Downloading chunk {i}/{len(chunks)}...")
+            links_part = " ".join(f'"{link}"' for link in chunk)
+            command = BASE_COMMAND + " " + links_part
+            print(f"[CMD] Running yt-dlp for chunk {i}...")
+            run_command(command)
 
-    print("[INFO] All downloads completed.")
+        print("[INFO] All downloads completed.")
 
-    # Embed metadata
+    # 4) Embed metadata for all downloaded files
     print("[INFO] Embedding metadata into videos...")
     for file in os.listdir(OUTPUT_DIR):
         if file.endswith('.info.json'):
