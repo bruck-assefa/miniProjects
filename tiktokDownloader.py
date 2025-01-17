@@ -39,12 +39,28 @@ def read_links_from_history(json_path, sections):
 
     links = []  # Collect all links
 
-    # Iterate through the specified sections
-    for section in sections:
-        print(f"[INFO] Extracting links from section: {section}")
-        section_list = data.get("Activity", {}).get(section, {}).get("ItemFavoriteList", [])
-        section_links = [item.get("link") for item in section_list if item.get("link")]
+    # Map user input to JSON schema paths
+    section_mapping = {
+        "Liked": ("Activity", "Like List", "ItemFavoriteList", "link"),
+        "Favorited": ("Activity", "Favorite Videos", "FavoriteVideoList", "Link"),
+        "Watch History": ("Activity", "Video Browsing History", "VideoList", "Link"),
+    }
 
+    for section in sections:
+        if section not in section_mapping:
+            print(f"[WARN] Invalid section: {section}. Skipping.")
+            continue
+
+        path = section_mapping[section]
+        print(f"[INFO] Extracting links from section: {section}")
+        # Traverse JSON data to fetch the list
+        sub_data = data
+        for key in path[:-1]:  # Navigate to the list level
+            sub_data = sub_data.get(key, {})
+        item_list = sub_data if isinstance(sub_data, list) else []
+        # Extract links
+        section_links = [item.get(path[-1]) for item in item_list if item.get(path[-1])]
+        
         if section_links:
             print(f"[INFO] Found {len(section_links)} links in section: {section}")
         else:
@@ -56,6 +72,7 @@ def read_links_from_history(json_path, sections):
     unique_links = list(set(links))
     print(f"[INFO] Total unique links extracted: {len(unique_links)}")
     return unique_links
+
 
 
 def chunk_list(lst, chunk_size):
