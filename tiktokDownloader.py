@@ -20,20 +20,43 @@ JQ_PATH = 'jq.exe'  # Replace with the full path to jq.exe if not in PATH
 FFMPEG_PATH = 'ffmpeg.exe'  # Replace with the full path to ffmpeg.exe if not in PATH
 
 # ---------- Helper Functions ----------
+import json
+
 def read_links_from_history(json_path, sections):
     """
     Reads a TikTok user history JSON file and extracts links from specified sections.
     """
-    with open(json_path, 'r', encoding='utf-8') as file:
-        data = json.load(file)
-    
-    links = set()  # Use a set to avoid duplicates
+    # Load the JSON file
+    try:
+        with open(json_path, 'r', encoding='utf-8') as file:
+            data = json.load(file)
+    except FileNotFoundError:
+        print(f"[ERROR] JSON file not found: {json_path}")
+        return []
+    except json.JSONDecodeError:
+        print(f"[ERROR] Invalid JSON file format: {json_path}")
+        return []
+
+    links = []  # Collect all links
+
+    # Iterate through the specified sections
     for section in sections:
-        section_data = data.get("Activity", {}).get(section, {}).get("ItemFavoriteList", [])
-        section_links = [item.get("link") for item in section_data if item.get("link")]
-        links.update(section_links)
-    
-    return list(links)  # Convert back to a list for processing
+        print(f"[INFO] Extracting links from section: {section}")
+        section_list = data.get("Activity", {}).get(section, {}).get("ItemFavoriteList", [])
+        section_links = [item.get("link") for item in section_list if item.get("link")]
+
+        if section_links:
+            print(f"[INFO] Found {len(section_links)} links in section: {section}")
+        else:
+            print(f"[WARN] No links found in section: {section}")
+
+        links.extend(section_links)
+
+    # Remove duplicates
+    unique_links = list(set(links))
+    print(f"[INFO] Total unique links extracted: {len(unique_links)}")
+    return unique_links
+
 
 def chunk_list(lst, chunk_size):
     """
