@@ -6,8 +6,8 @@ import signal
 
 # ---------- Configuration ----------
 USER_HISTORY_JSON = 'user_data_tiktok.json'
-OUTPUT_DIR = os.path.join('TikTok', 'Videos')  # Modify as per your actual output directory
-WITH_METADATA_DIR = os.path.join('TikTok', 'with_metadata')
+OUTPUT_DIR = os.path.join('Downloaded', 'Videos')  # Modify as per your actual output directory
+WITH_METADATA_DIR = os.path.join('Downloaded', 'with_metadata')
 LINKS_PER_CHUNK = 200  # Adjust as needed
 BASE_COMMAND = (
     'yt-dlp '
