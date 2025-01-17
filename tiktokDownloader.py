@@ -1,219 +1,142 @@
+import json
 import os
-import sys
-import json
 import subprocess
-import signal
+import sys
 
-# ---------- Configuration ----------
-USER_HISTORY_JSON = 'user_data_tiktok.json'
-OUTPUT_DIR = os.path.join('Downloaded', 'Videos')  # Modify as per your actual output directory
-WITH_METADATA_DIR = os.path.join('Downloaded', 'with_metadata')
-LINKS_PER_CHUNK = 130  # Adjust as needed
-BASE_COMMAND = (
-    'yt-dlp '
-    '--cookies-from-browser Firefox '
-    f'-o "{os.path.join(OUTPUT_DIR, "%(id)s.%(ext)s")}" '
-    '--add-metadata '
-    '--write-info-json '
-)
-JQ_PATH = 'jq.exe'  # Replace with the full path to jq.exe if not in PATH
-FFMPEG_PATH = 'ffmpeg.exe'  # Replace with the full path to ffmpeg.exe if not in PATH
 
-# ---------- Helper Functions ----------
-import json
-
-def read_links_from_history(json_path, sections):
+def read_likes_from_history(json_path):
     """
-    Reads a TikTok user history JSON file and extracts links from specified sections.
+    Reads a TikTok user history JSON file and extracts links from the 'Like List' section.
     """
-    # Load the JSON file
     try:
         with open(json_path, 'r', encoding='utf-8') as file:
             data = json.load(file)
     except FileNotFoundError:
         print(f"[ERROR] JSON file not found: {json_path}")
-        return []
+        sys.exit(1)
     except json.JSONDecodeError:
         print(f"[ERROR] Invalid JSON file format: {json_path}")
-        return []
-
-    links = []  # Collect all links
-
-    # Section-specific key mappings for "link"
-    key_mappings = {
-        "Like List": {"list_key": "ItemFavoriteList", "link_key": "link"},
-        "Favorite Videos": {"list_key": "FavoriteVideoList", "link_key": "Link"},
-        "Video Browsing History": {"list_key": "VideoList", "link_key": "Link"},
-    }
-
-    # Iterate through the specified sections
-    for section in sections:
-        print(f"[INFO] Extracting links from section: {section}")
-        section_data = data.get("Activity", {}).get(section, {})
-        keys = key_mappings.get(section)
-
-        if not keys:
-            print(f"[WARN] No key mapping defined for section: {section}. Skipping.")
-            continue
-
-        list_key = keys["list_key"]
-        link_key = keys["link_key"]
-
-        section_list = section_data.get(list_key, [])
-        section_links = [item.get(link_key) for item in section_list if item.get(link_key)]
-
-        if section_links:
-            print(f"[INFO] Found {len(section_links)} links in section: {section}")
-        else:
-            print(f"[WARN] No links found in section: {section}")
-
-        links.extend(section_links)
-
-    # Remove duplicates
-    unique_links = list(set(links))
-    print(f"[INFO] Total unique links extracted: {len(unique_links)}")
-    return unique_links
-
-
-
-
-def chunk_list(lst, chunk_size):
-    """
-    Splits a list into chunks of given size.
-    """
-    for i in range(0, len(lst), chunk_size):
-        yield lst[i:i + chunk_size]
-
-def run_command(command):
-    """
-    Runs a shell command with subprocess.run and handles Ctrl+C cancellation.
-    """
-    try:
-        subprocess.run(command, shell=True, check=True)
-    except subprocess.CalledProcessError as e:
-        print(f"Command failed with exit code {e.returncode}: {command}")
-    except KeyboardInterrupt:
-        print("Operation cancelled by user.")
         sys.exit(1)
 
-def sanitize_filename(filename):
+    # Navigate to the "Like List" -> "ItemFavoriteList" -> "link"
+    like_list = data.get("Activity", {}).get("Like List", {}).get("ItemFavoriteList", [])
+    links = [item.get("link") for item in like_list if item.get("link")]
+
+    if links:
+        print(f"[INFO] Found {len(links)} liked video links.")
+    else:
+        print("[WARN] No liked video links found in the 'Like List' section.")
+
+    return links
+
+
+def download_videos(links, output_dir, max_downloads=None):
     """
-    Removes or replaces characters that may be problematic in Windows filenames.
+    Downloads TikTok videos using yt-dlp and saves them to the specified directory.
     """
-    forbidden_chars = ['<', '>', ':', '"', '/', '\\', '|', '?', '*']
-    for ch in forbidden_chars:
-        filename = filename.replace(ch, '_')
-    return filename
+    os.makedirs(output_dir, exist_ok=True)
 
-def embed_metadata(input_mp4, input_json, output_dir):
+    if max_downloads:
+        links = links[:max_downloads]
+
+    print(f"[INFO] Preparing to download {len(links)} videos...")
+
+    for index, link in enumerate(links, start=1):
+        output_template = os.path.join(output_dir, "%(id)s.%(ext)s")
+        command = [
+            "yt-dlp",
+            "--cookies-from-browser", "Firefox",
+            "-o", output_template,
+            "--add-metadata",
+            "--write-info-json",
+            link,
+        ]
+        print(f"[INFO] Downloading video {index}/{len(links)}: {link}")
+        try:
+            subprocess.run(command, check=True)
+        except subprocess.CalledProcessError:
+            print(f"[ERROR] Failed to download video: {link}")
+        except KeyboardInterrupt:
+            print("\n[INFO] Operation cancelled by user.")
+            sys.exit(0)
+
+    print("[INFO] All downloads completed.")
+
+
+def embed_metadata(input_dir, output_dir):
     """
-    Embeds metadata from the JSON into the MP4 video using FFmpeg & jq.
+    Embeds metadata from the JSON into the MP4 videos using FFmpeg.
     """
-    try:
-        # Extract metadata using jq
-        fulltitle_cmd = f'{JQ_PATH} -r ".fulltitle" "{input_json}"'
-        artist_cmd = f'{JQ_PATH} -r ".artist" "{input_json}"'
+    os.makedirs(output_dir, exist_ok=True)
 
-        fulltitle = subprocess.check_output(fulltitle_cmd, shell=True, text=True).strip()
-        artist = subprocess.check_output(artist_cmd, shell=True, text=True).strip()
-    except subprocess.CalledProcessError:
-        print(f"[WARN] Could not extract metadata from {input_json}. Skipping.")
-        return
-
-    # Sanitize and truncate title
-    short_title = sanitize_filename(fulltitle[:15])
-    safe_artist = sanitize_filename(artist)
-
-    # Construct output filename
-    output_filename = f"{safe_artist} - {short_title}.mp4"
-    output_path = os.path.join(output_dir, output_filename)
-
-    # Embed metadata with FFmpeg
-    ffmpeg_cmd = (
-        f'{FFMPEG_PATH} -y -i "{input_mp4}" '
-        f'-metadata title="{fulltitle}" '
-        f'-metadata artist="{artist}" '
-        f'-codec copy "{output_path}"'
-    )
-    try:
-        run_command(ffmpeg_cmd)
-        print(f"[INFO] Metadata embedded -> {output_path}")
-    except KeyboardInterrupt:
-        print("[INFO] Cancelled during FFmpeg processing.")
-        sys.exit(1)
-
-# ---------- Main Download & Metadata Flow ----------
-def main():
-    # Ask the user what they want to do
-    print("Select an option:")
-    print("1. Download and Bake Metadata (Download videos and embed metadata)")
-    print("2. Just Bake Metadata (Embed metadata for already downloaded videos)")
-    choice = input("Enter 1 or 2: ").strip()
-
-    if choice not in ['1', '2']:
-        print("Invalid choice. Exiting.")
-        return
-
-    # Ensure directories exist
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    os.makedirs(WITH_METADATA_DIR, exist_ok=True)
-
-    if choice == '1':
-        # Prompt for sections to download from
-        print("Available sections: Liked, Favorited, Watch History")
-        sections_input = input("Enter sections to download from (comma-separated): ").strip()
-        sections = [section.strip() for section in sections_input.split(',')]
-
-        # Prompt for max downloads
-        max_downloads_input = input("Enter maximum number of videos to download (leave blank for all): ").strip()
-        max_downloads = int(max_downloads_input) if max_downloads_input.isdigit() else None
-
-        # Read TikTok links from specified sections
-        print("[INFO] Reading user history JSON...")
-        links = read_links_from_history(USER_HISTORY_JSON, sections)
-        if max_downloads:
-            links = links[:max_downloads]  # Limit the number of links
-
-        total_links = len(links)
-        print(f"[INFO] Found {total_links} video links across sections: {', '.join(sections)}")
-
-        if total_links == 0:
-            print("[INFO] No links found. Exiting.")
-            return
-
-        # Chunk links
-        chunks = list(chunk_list(links, LINKS_PER_CHUNK))
-        print(f"[INFO] Total chunks: {len(chunks)}")
-
-        # Download videos
-        for i, chunk in enumerate(chunks, start=1):
-            print(f"[INFO] Downloading chunk {i}/{len(chunks)}...")
-            links_part = " ".join(f'"{link}"' for link in chunk)
-            command = BASE_COMMAND + " " + links_part
-            print(f"[CMD] Running yt-dlp for chunk {i}...")
-            run_command(command)
-
-        print("[INFO] All downloads completed.")
-
-    # 4) Embed metadata for all downloaded files
-    print("[INFO] Embedding metadata into videos...")
-    for file in os.listdir(OUTPUT_DIR):
-        if file.endswith('.info.json'):
+    for file in os.listdir(input_dir):
+        if file.endswith(".info.json"):
             base_name = file[:-9]  # Remove .info.json
-            mp4_file = os.path.join(OUTPUT_DIR, f"{base_name}.mp4")
-            json_file = os.path.join(OUTPUT_DIR, file)
+            video_file = os.path.join(input_dir, f"{base_name}.mp4")
+            json_file = os.path.join(input_dir, file)
 
-            if os.path.exists(mp4_file):
-                embed_metadata(mp4_file, json_file, WITH_METADATA_DIR)
-            else:
-                print(f"[WARN] MP4 file missing for JSON: {json_file}")
+            if not os.path.exists(video_file):
+                print(f"[WARN] Video file missing for JSON: {json_file}")
+                continue
 
-    print("[INFO] Metadata embedding completed.")
+            # Extract metadata from JSON
+            try:
+                with open(json_file, 'r', encoding='utf-8') as f:
+                    metadata = json.load(f)
+                fulltitle = metadata.get("fulltitle", "Unknown Title")
+                artist = metadata.get("artist", "Unknown Artist")
+            except (FileNotFoundError, json.JSONDecodeError):
+                print(f"[WARN] Failed to read metadata from: {json_file}")
+                continue
+
+            # Construct sanitized filename for output
+            short_title = fulltitle[:15].replace("/", "_").replace("\\", "_")
+            sanitized_artist = artist.replace("/", "_").replace("\\", "_")
+            output_file = os.path.join(output_dir, f"{sanitized_artist} - {short_title}.mp4")
+
+            # FFmpeg command to embed metadata
+            command = [
+                "ffmpeg",
+                "-y",  # Overwrite output file if it exists
+                "-i", video_file,
+                "-metadata", f"title={fulltitle}",
+                "-metadata", f"artist={artist}",
+                "-codec", "copy",
+                output_file,
+            ]
+            print(f"[INFO] Embedding metadata for: {video_file}")
+            try:
+                subprocess.run(command, check=True)
+                print(f"[INFO] Metadata embedded: {output_file}")
+            except subprocess.CalledProcessError:
+                print(f"[ERROR] Failed to embed metadata for: {video_file}")
+            except KeyboardInterrupt:
+                print("\n[INFO] Operation cancelled by user.")
+                sys.exit(0)
+
+
+def main():
+    json_path = "user_data_tiktok.json"  # Path to the JSON file
+    input_dir = os.path.join("TikTok", "Videos")  # Directory for downloaded videos
+    output_dir = os.path.join("TikTok", "with_metadata")  # Directory for videos with metadata
+    max_downloads = 5  # Set this to limit downloads during testing; use None for no limit
+
+    print("[INFO] Extracting liked video links...")
+    links = read_likes_from_history(json_path)
+
+    if not links:
+        print("[INFO] No links to download. Exiting.")
+        return
+
+    # Step 1: Download videos
+    download_videos(links, input_dir, max_downloads)
+
+    # Step 2: Embed metadata
+    print("[INFO] Embedding metadata into videos...")
+    embed_metadata(input_dir, output_dir)
+
+    print("[INFO] All operations completed successfully.")
+
 
 if __name__ == "__main__":
-    def signal_handler(sig, frame):
-        print("\n[INFO] Exiting gracefully.")
-        sys.exit(0)
-    signal.signal(signal.SIGINT, signal_handler)
-
     main()
