@@ -8,7 +8,7 @@ import signal
 USER_HISTORY_JSON = 'user_data_tiktok.json'
 OUTPUT_DIR = os.path.join('Downloaded', 'Videos')  # Modify as per your actual output directory
 WITH_METADATA_DIR = os.path.join('Downloaded', 'with_metadata')
-LINKS_PER_CHUNK = 200  # Adjust as needed
+LINKS_PER_CHUNK = 130  # Adjust as needed
 BASE_COMMAND = (
     'yt-dlp '
     '--cookies-from-browser Firefox '
@@ -20,15 +20,20 @@ JQ_PATH = 'jq.exe'  # Replace with the full path to jq.exe if not in PATH
 FFMPEG_PATH = 'ffmpeg.exe'  # Replace with the full path to ffmpeg.exe if not in PATH
 
 # ---------- Helper Functions ----------
-def read_links_from_history(json_path):
+def read_links_from_history(json_path, sections):
     """
-    Reads a TikTok user history JSON file and extracts the "Like List" links.
+    Reads a TikTok user history JSON file and extracts links from specified sections.
     """
     with open(json_path, 'r', encoding='utf-8') as file:
         data = json.load(file)
-    like_list = data.get("Activity", {}).get("Like List", {}).get("ItemFavoriteList", [])
-    links = [item.get("link") for item in like_list if item.get("link")]
-    return links
+    
+    links = set()  # Use a set to avoid duplicates
+    for section in sections:
+        section_data = data.get("Activity", {}).get(section, {}).get("ItemFavoriteList", [])
+        section_links = [item.get("link") for item in section_data if item.get("link")]
+        links.update(section_links)
+    
+    return list(links)  # Convert back to a list for processing
 
 def chunk_list(lst, chunk_size):
     """
@@ -112,21 +117,33 @@ def main():
     os.makedirs(WITH_METADATA_DIR, exist_ok=True)
 
     if choice == '1':
-        # 1) Read TikTok links from history
+        # Prompt for sections to download from
+        print("Available sections: Liked, Favorited, Watch History")
+        sections_input = input("Enter sections to download from (comma-separated): ").strip()
+        sections = [section.strip() for section in sections_input.split(',')]
+
+        # Prompt for max downloads
+        max_downloads_input = input("Enter maximum number of videos to download (leave blank for all): ").strip()
+        max_downloads = int(max_downloads_input) if max_downloads_input.isdigit() else None
+
+        # Read TikTok links from specified sections
         print("[INFO] Reading user history JSON...")
-        links = read_links_from_history(USER_HISTORY_JSON)
+        links = read_links_from_history(USER_HISTORY_JSON, sections)
+        if max_downloads:
+            links = links[:max_downloads]  # Limit the number of links
+
         total_links = len(links)
-        print(f"[INFO] Found {total_links} liked video links.")
+        print(f"[INFO] Found {total_links} video links across sections: {', '.join(sections)}")
 
         if total_links == 0:
             print("[INFO] No links found. Exiting.")
             return
 
-        # 2) Chunk links
+        # Chunk links
         chunks = list(chunk_list(links, LINKS_PER_CHUNK))
         print(f"[INFO] Total chunks: {len(chunks)}")
 
-        # 3) Download videos
+        # Download videos
         for i, chunk in enumerate(chunks, start=1):
             print(f"[INFO] Downloading chunk {i}/{len(chunks)}...")
             links_part = " ".join(f'"{link}"' for link in chunk)
